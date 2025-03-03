@@ -1,73 +1,72 @@
-from torchvision.transforms import v2
-import torch
+import torch, torchvision
 import copy
 
-def augmentations(do_hflip):
-    soft_augment = v2.Compose((
-        v2.RandomHorizontalFlip(p=0.5 if do_hflip else 0),
-        v2.RandomAffine(0, (0.125, 0.125)),
-    ))
-    hard_augment = v2.RandAugment()
-    return soft_augment, hard_augment
+class Supervised:
+    def __init__(self, model, weak_transform, strong_transform):
+        self.model = model
+        self.transform = weak_transform
 
-class Dummy:
-    def __init__(self, **kwargs):
-        pass
-
-    def __call__(self, model, imgs):
-        return torch.zeros((), requires_grad=True)
+    def compute_loss(self, sup_imgs, sup_labels, unsup_imgs):
+        sup_imgs = self.transform(sup_imgs)
+        logits = self.model(sup_imgs)
+        supervised_loss = torch.nn.functional.cross_entropy(logits, sup_labels)
+        return supervised_loss, 0
 
 class FixMatch:
-    # https://dl.acm.org/doi/abs/10.5555/3495724.3495775
-    def __init__(self, soft_augment, hard_augment, **kwargs):
-        self.soft_augment = soft_augment
-        self.hard_augment = hard_augment
+    def __init__(self, model, weak_transform, strong_transform):
+        self.model = model
+        self.weak_transform = weak_transform
+        self.strong_transform = strong_transform
 
-    def __call__(self, model, imgs, tau=0.95):
-        soft_imgs = self.soft_augment(imgs)
-        with torch.no_grad():
-            soft_probs = torch.softmax(model(soft_imgs), 1)
-        soft_probs_max, soft_labels = torch.max(soft_probs, 1)
-        ix = soft_probs_max >= tau
-        if ix.sum() == 0:  # ignore if nothing
-            return torch.zeros((), requires_grad=True)
-        hard_imgs = self.hard_augment(imgs[ix])
-        logits = model(hard_imgs)
-        return torch.nn.functional.cross_entropy(logits, soft_labels[ix])
+    def compute_loss(self, sup_imgs, sup_labels, unsup_imgs, confidence=0.95):
+        # batch normalization is affected by doing two fpasses
+        # therefore make a single fpass
+        sup_imgs = self.weak_transform(sup_imgs)
+        weak_unsup_imgs = self.weak_transform(unsup_imgs)
+        strong_unsup_imgs = self.strong_transform(unsup_imgs)
+        logits = self.model(torch.cat((sup_imgs, weak_unsup_imgs, strong_unsup_imgs)))
+        sup_logits, weak_unsup_logits, strong_unsup_logits = torch.split(logits, (len(sup_imgs), len(weak_unsup_imgs), len(strong_unsup_imgs)))
+        # supervised loss
+        supervised_loss = torch.nn.functional.cross_entropy(sup_logits, sup_labels)
+        # fixmatch loss (unsupervised)
+        weak_unsup_probs = weak_unsup_logits.detach().softmax(1)
+        max_probs, weak_unsup_labels = weak_unsup_probs.max(1)
+        ix = max_probs >= confidence
+        unsupervised_loss = torch.nn.functional.cross_entropy(strong_unsup_logits[ix], weak_unsup_labels[ix]) if ix.sum() > 0 else 0
+        return supervised_loss, unsupervised_loss
 
 class MixMatch:
     # https://proceedings.neurips.cc/paper_files/paper/2019/hash/1cd138d0499a68f4bb72bee04bbec2d7-Abstract.html
-    def __init__(self, soft_augment, **kwargs):
-        self.soft_augment = soft_augment
+    def __init__(self, model, weak_transform, strong_transform):
+        self.model = model
+        self.weak_transform = weak_transform
 
     def __call__(self, model, imgs, K=2, T=0.5, alpha=0.75):
         with torch.no_grad():
-            avg_probs = sum(torch.softmax(model(self.soft_augment(imgs)), 1) for _ in range(K)) / K
+            avg_probs = sum(torch.softmax(model(self.weak_augment(imgs)), 1) for _ in range(K)) / K
         # sharpen
         labels = (avg_probs**(1/T)) / torch.sum(avg_probs**(1/T))
         # mixup
-        lmbda = torch.distributions.Beta(alpha, alpha).sample([len(imgs)]).to(imgs.device)
-        lmbda = torch.maximum(lmbda, 1-lmbda)
-        ix = torch.randperm(len(imgs)).to(imgs.device)
-        imgs = lmbda[:, None, None, None]*imgs + (1-lmbda[:, None, None, None])*imgs[ix]
-        labels = lmbda[:, None]*labels + (1-lmbda[:, None])*labels[ix]
+        mixup = torchvision.transforms.v2.MixUp(num_classes=avg_probs.shape[1])
+        imgs, labels = mixup(imgs, labels)
         # loss
         probs = torch.softmax(model(imgs), 1)
         return torch.mean((probs - labels)**2)
 
 class DINO:
     # https://arxiv.org/abs/2104.14294
-    def __init__(self, teacher, **kwargs):
-        self.teacher = copy.deepcopy(teacher)
+    def __init__(self, model, weak_transform, strong_transform):
+        self.student = model
+        self.teacher = copy.deepcopy(model)
 
-    def __call__(self, student, imgs, teacher_momentum=0.999, student_temp=0.1, teacher_temp=0.04):
+    def __call__(self, imgs, teacher_momentum=0.999, student_temp=0.1, teacher_temp=0.04):
         # update teacher
-        for param_t, param_s in zip(self.teacher.parameters(), student.parameters()):
+        for param_t, param_s in zip(self.teacher.parameters(), self.student.parameters()):
             param_t.data = teacher_momentum*param_t.data + (1-teacher_momentum)*param_s.data
         # teach student
         with torch.no_grad():
             teacher_logits = self.teacher(imgs)
         teacher_probs = torch.softmax((teacher_logits - teacher_logits.mean(0)) / teacher_temp, 1)
-        student_logits = student(imgs)
+        student_logits = self.student(imgs)
         student_probs = torch.softmax(student_logits / student_temp, 1)
         return -torch.mean(torch.sum(teacher_probs * torch.log(student_probs+1e-9), 1))
