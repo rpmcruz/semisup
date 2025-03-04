@@ -8,6 +8,7 @@ class Nop:
         return 0
 
 class FixMatch:
+    # https://proceedings.neurips.cc/paper/2020/hash/06964dce9addb1c5cb5d6e3d9838f733-Abstract.html
     def __init__(self, model, weak_transform, strong_transform):
         self.model = model
         self.weak_transform = weak_transform
