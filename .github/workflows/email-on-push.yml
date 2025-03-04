@@ -16,7 +16,7 @@ jobs:
           server_port: 587
           username: ${{ secrets.EMAIL_USER }}
           password: ${{ secrets.EMAIL_PASS }}
-          subject: "New Push in Repository"
+          subject: "semisup: new push"
           body: "A new push has been made to the repository."
           to: "rpcruz@fe.up.pt"
-          from: "GitHub Actions"
+          from: "rpcruz@fe.up.pt"
