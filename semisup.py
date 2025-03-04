@@ -18,7 +18,7 @@ class FixMatch:
         with torch.no_grad():
             weak_logits = self.model(weak_imgs)
         # fixmatch loss (unsupervised)
-        weak_probs = weak_logits.detach().softmax(1)
+        weak_probs = weak_logits.softmax(1)
         max_probs, weak_labels = weak_probs.max(1)
         ix = max_probs >= confidence
         strong_imgs = self.strong_transform(imgs[ix])
