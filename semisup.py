@@ -52,6 +52,7 @@ class DINO:
         self.weak_transform = weak_transform
 
     def __call__(self, imgs, teacher_momentum=0.999, student_temp=0.1, teacher_temp=0.04):
+        imgs = self.weak_transform(imgs)
         # update teacher
         for param_t, param_s in zip(self.teacher.parameters(), self.student.parameters()):
             param_t.data = teacher_momentum*param_t.data + (1-teacher_momentum)*param_s.data
