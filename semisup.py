@@ -35,10 +35,10 @@ class MixMatch:
         with torch.no_grad():
             avg_probs = sum(self.model(self.weak_transform(imgs)).softmax(1) for _ in range(K)) / K
         # sharpen
-        labels = (avg_probs**(1/T)) / torch.sum(avg_probs**(1/T))
+        labels = (avg_probs**(1/T)) / torch.sum(avg_probs**(1/T), 1, True)
         # mixup
         mixup = torchvision.transforms.v2.MixUp(num_classes=avg_probs.shape[1])
-        imgs, labels = mixup(imgs, labels)
+        imgs, labels = mixup(self.weak_transform(imgs), labels)
         # loss
         probs = self.model(imgs).softmax(1)
         return torch.mean((probs - labels)**2)
@@ -59,8 +59,8 @@ class DINO:
         # teach student
         with torch.no_grad():
             teacher_logits = self.teacher(imgs)
-        teacher_probs = torch.softmax((teacher_logits - teacher_logits.mean(0)) / teacher_temp, 1)
+        teacher_probs = torch.softmax((teacher_logits - teacher_logits.mean(0, True)) / teacher_temp, 1)
         student_logits = self.student(imgs)
-        student_probs = torch.softmax(student_logits / student_temp, 1)
+        student_logprobs = torch.nn.functional.log_softmax(student_logits / student_temp, 1)
         # loss
-        return -torch.mean(torch.sum(teacher_probs * torch.log(student_probs+1e-9), 1))
+        return -torch.mean(torch.sum(teacher_probs * student_logprobs, 1))
