@@ -28,16 +28,16 @@ class MixMatch:
     # https://proceedings.neurips.cc/paper_files/paper/2019/hash/1cd138d0499a68f4bb72bee04bbec2d7-Abstract.html
     def __init__(self, model, weak_augment, strong_augment):
         self.model = model
-        self.transform = weak_augment
+        self.augment = weak_augment
 
     def __call__(self, epoch, imgs, K=2, T=0.5, alpha=0.75):
         with torch.no_grad():
-            avg_probs = sum(self.model(self.transform(imgs)).softmax(1) for _ in range(K)) / K
+            avg_probs = sum(self.model(self.augment(imgs)).softmax(1) for _ in range(K)) / K
         # sharpen
         labels = (avg_probs**(1/T)) / torch.sum(avg_probs**(1/T), 1, True)
         # mixup
         mixup = torchvision.transforms.v2.MixUp(num_classes=avg_probs.shape[1])
-        imgs, labels = mixup(self.transform(imgs), labels)
+        imgs, labels = mixup(imgs, labels)
         # loss
         probs = self.model(imgs).softmax(1)
         return torch.mean((probs - labels)**2)
