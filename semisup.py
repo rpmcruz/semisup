@@ -42,6 +42,8 @@ class MixMatch:
         probs = self.model(imgs).softmax(1)
         return torch.mean((probs - labels)**2)
 
+# TODO: implement ReMixMatch
+
 class DINO:
     # https://arxiv.org/abs/2104.14294
     # version without multi-crop augmentation
