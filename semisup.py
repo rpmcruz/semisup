@@ -4,7 +4,7 @@ import copy
 class Nop:
     def __init__(self, *args, **kwargs):
         pass
-    def __call__(self, unsup_imgs):
+    def __call__(self, epoch, sup_imgs, sup_labels, unsup_imgs):
         return 0
 
 class FixMatch:
@@ -14,14 +14,14 @@ class FixMatch:
         self.weak_augment = weak_augment
         self.strong_augment = strong_augment
 
-    def __call__(self, epoch, imgs, confidence=0.95):
-        weak_imgs = self.weak_augment(imgs)
+    def __call__(self, epoch, sup_imgs, sup_labels, unsup_imgs, confidence=0.95):
+        weak_imgs = self.weak_augment(unsup_imgs)
         with torch.no_grad():
             weak_logits = self.model(weak_imgs)
         weak_probs = weak_logits.softmax(1)
         max_probs, weak_labels = weak_probs.max(1)
         ix = max_probs >= confidence
-        strong_imgs = self.strong_augment(imgs[ix])
+        strong_imgs = self.strong_augment(unsup_imgs[ix])
         return torch.nn.functional.cross_entropy(self.model(strong_imgs), weak_labels[ix]) if ix.sum() > 0 else 0
 
 class MixMatch:
