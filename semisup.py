@@ -39,6 +39,7 @@ class MixMatch:
         # mixup
         mixup = torchvision.transforms.v2.MixUp(num_classes=avg_probs.shape[1], alpha=alpha)
         unsup_imgs, labels = mixup(unsup_imgs, labels)
+        # FIXME: should also do mixup between sup and unsup!
         # loss
         probs = self.model(unsup_imgs).softmax(1)
         return torch.mean((probs - labels)**2)
